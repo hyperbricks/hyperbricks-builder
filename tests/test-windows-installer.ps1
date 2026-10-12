@@ -34,6 +34,13 @@ try {
     $release=@{tag_name=$Tag;draft=$false;assets=$assets}
     [IO.File]::WriteAllText((Join-Path $fixture 'metadata.json'),(ConvertTo-Json -InputObject @($release) -Depth 8))
     [IO.File]::WriteAllText((Join-Path $fixture 'release.json'),(ConvertTo-Json -InputObject $release -Depth 8))
+    Assert ((Select-HBRelease @($release) $Tag).tag_name -ceq $Tag) 'Exact tag selection'
+    try { $null=Select-HBRelease @($release) 'v99.99.99'; throw 'UNEXPECTED_SUCCESS' }
+    catch { Assert ($_.Exception.Message -ne 'UNEXPECTED_SUCCESS') 'Unknown tag accepted' }
+    $incomplete=@{tag_name='v99.99.99';draft=$false;assets=@()}
+    Assert ((Select-HBRelease @($incomplete,$release) '').tag_name -ceq $Tag) 'Incomplete release selected'
+    $draft=@{tag_name='v99.99.99';draft=$true;assets=$assets}
+    Assert ((Select-HBRelease @($draft,$release) '').tag_name -ceq $Tag) 'Draft selected'
     $script:failure=''
     # Replace transport only; exercise the real selection, hashing, extraction,
     # version execution and atomic replacement against a native binary.
@@ -55,6 +62,24 @@ try {
         try {Install-HyperBricks '' $dest;throw 'UNEXPECTED_SUCCESS'}
         catch {Assert ($_.Exception.Message -ne 'UNEXPECTED_SUCCESS') 'Failure accepted'}
         Assert ((Get-FileHash (Join-Path $dest 'hyperbricks.exe')).Hash -eq (Get-FileHash $Binary).Hash) 'Existing installation damaged'
+    }
+    $script:failure=''
+    # Give malformed archives matching hashes, so archive validation itself is exercised.
+    foreach($member in @('../hyperbricks.exe','other.exe','hyperbricks.exe/')) {
+        Remove-Item $archive
+        $z=[IO.Compression.ZipFile]::Open($archive,[IO.Compression.ZipArchiveMode]::Create)
+        try { $null=$z.CreateEntry($member) } finally { $z.Dispose() }
+        $badHash=(Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+        [IO.File]::WriteAllText((Join-Path $fixture "$name.sha256"),"$badHash  $name`n",[Text.UTF8Encoding]::new($false))
+        $badSide=(Get-FileHash (Join-Path $fixture "$name.sha256") -Algorithm SHA256).Hash.ToLowerInvariant()
+        foreach($asset in $assets) {
+            if($asset.name -ceq $name){$asset.digest="sha256:$badHash"}
+            if($asset.name -ceq "$name.sha256"){$asset.digest="sha256:$badSide"}
+        }
+        [IO.File]::WriteAllText((Join-Path $fixture 'metadata.json'),(ConvertTo-Json -InputObject @($release) -Depth 8))
+        try { Install-HyperBricks '' $dest;throw 'UNEXPECTED_SUCCESS' }
+        catch { Assert ($_.Exception.Message -ne 'UNEXPECTED_SUCCESS') 'Unsafe archive accepted' }
+        Assert ((Get-FileHash (Join-Path $dest 'hyperbricks.exe')).Hash -eq (Get-FileHash $Binary).Hash) 'Unsafe archive damaged installation'
     }
     Write-Host 'Windows installer selection, hash checks, native execution, replacement and failure preservation passed.'
 } finally { [IO.Directory]::Delete($fixture,$true) }

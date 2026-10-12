@@ -141,7 +141,7 @@ function Install-HyperBricks([string]$RequestedVersion, [string]$Destination) {
         } finally { $zip.Dispose() }
         $output = @(& $stage version)
         if ($LASTEXITCODE -ne 0 -or $output -cnotcontains $tag) { throw 'Executable version differs from release' }
-        if ([IO.File]::Exists($target)) { [IO.File]::Replace($stage, $target, $null) }
+        if ([IO.File]::Exists($target)) { [IO.File]::Replace($stage, $target, [NullString]::Value) }
         else { [IO.File]::Move($stage, $target) }
         $stage = $null
         Write-Host "Installed HyperBricks ${tag}: $target"

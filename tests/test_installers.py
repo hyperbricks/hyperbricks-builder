@@ -45,11 +45,12 @@ class InstallerSelection(unittest.TestCase):
 
 @unittest.skipIf(os.name == "nt", "Unix installer; Windows has native PowerShell coverage")
 class ShellInstaller(unittest.TestCase):
-    def exercise(self, fault=None):
+    def exercise(self, fault=None, explicit=False):
         with tempfile.TemporaryDirectory() as td:
             temp=Path(td); fake=temp/'bin';fake.mkdir(); target=temp/'target';target.mkdir()
             installed=target/'hyperbricks';installed.write_text('old installation')
-            tag='v1.3.2-beta'; body=f'#!/bin/sh\nprintf "%s\\n" "{tag}"\n'.encode()
+            tag=os.environ.get('HB_TEST_VERSION', 'v1.3.2-beta'); body=f'#!/bin/sh\nprintf "%s\\n" "{tag}"\n'.encode()
+            if os.environ.get('HB_TEST_BINARY'): body=Path(os.environ['HB_TEST_BINARY']).read_bytes()
             buf=io.BytesIO()
             with tarfile.open(fileobj=buf,mode='w:gz') as archive:
                 member=tarfile.TarInfo('../hyperbricks' if fault=='traversal' else 'hyperbricks')
@@ -81,7 +82,9 @@ shutil.copyfile(root/name,out);print('200',end='')
 '''
             (fake/'curl').write_text(curl);(fake/'curl').chmod(0o755)
             env=dict(os.environ,PATH=str(fake)+os.pathsep+os.environ['PATH'],FIXTURE=str(temp),FAULT=fault or '')
-            result=subprocess.run(['sh',str(ROOT/'installers/install.sh'),'--install-dir',str(target)],env=env,text=True,capture_output=True)
+            args=['sh',str(ROOT/'installers/install.sh'),'--install-dir',str(target)]
+            if explicit: args += ['--version',tag]
+            result=subprocess.run(args,env=env,text=True,capture_output=True)
             if fault:
                 self.assertNotEqual(result.returncode,0,(fault,result.stdout,result.stderr))
                 self.assertEqual(installed.read_text(),'old installation')
@@ -89,6 +92,7 @@ shutil.copyfile(root/name,out);print('200',end='')
                 self.assertEqual(result.returncode,0,result.stderr)
                 self.assertEqual(installed.read_bytes(),body)
     def test_install(self): self.exercise()
+    def test_explicit_tag(self): self.exercise(explicit=True)
     def test_failures_preserve_installation(self):
         for fault in ('hash','traversal','symlink','redirect','interrupted'):
             with self.subTest(fault=fault):self.exercise(fault)
