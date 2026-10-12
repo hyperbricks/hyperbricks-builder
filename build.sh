@@ -31,16 +31,7 @@ printf 'Fetching upstream main and tags…\n'
 git clone --quiet --single-branch --branch main --no-tags "$SOURCE_URL" "$WORK_DIR/source"
 git -C "$WORK_DIR/source" fetch --quiet origin '+refs/tags/*:refs/tags/*'
 
-# Version ordering, not commit date. A final version sorts after its prereleases.
-# --merged excludes tags whose commits are not ancestors of the fetched main.
-TAG=
-while IFS= read -r candidate; do
-  if [[ "$candidate" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$ ]]; then
-    TAG="$candidate"
-    break
-  fi
-done < <(git -C "$WORK_DIR/source" -c versionsort.suffix=- tag --merged HEAD --sort=-version:refname --list 'v[0-9]*')
-[[ -n "$TAG" ]] || { printf 'No version tag found on main.\n' >&2; exit 1; }
+TAG="$(bash "$BUILDER_DIR/scripts/latest-tag.sh" "$WORK_DIR/source")"
 COMMIT="$(git -C "$WORK_DIR/source" rev-parse "refs/tags/${TAG}^{commit}")"
 git -C "$WORK_DIR/source" checkout --quiet --detach "$COMMIT"
 printf 'Building %s (%s)\n' "$TAG" "$COMMIT"

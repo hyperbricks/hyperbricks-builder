@@ -27,3 +27,30 @@ all target systems.
 
 The script only fetches and builds. It does not change the product checkout,
 create tags, publish releases or configure CI.
+
+## GitHub Actions
+
+The **Build latest HyperBricks tag** workflow runs on pushes to this repository's
+`main`, on pull requests, and manually via **Actions → Build latest HyperBricks
+tag → Run workflow**. Each run selects the newest version tag reachable from
+upstream `main`, including betas, once and pins every job to its exact commit.
+The local script and CI share the same tag selector.
+
+The five targets above build on native GitHub-hosted runners. CI uses the Go
+version from the selected source's `go.mod`, verifies the executable's version,
+and runs process lifecycle and response-cache tests on each platform. The
+Windows runner additionally executes the process-tree termination test. The
+workflow requires explicit passing results for the critical tests; a missing
+or skipped Windows test cannot make the run green.
+
+Download each successful platform's archive, SHA-256 sidecar and source metadata
+from the workflow run's **Artifacts** section. Unix builds use `.tar.gz` to
+preserve executable permissions; Windows uses `.zip`. Test output is retained
+on success or failure. Artifacts expire after 14 days. All five jobs must pass
+for a successful workflow; individual platform artifacts may exist during a
+failed run.
+
+No extra secrets, product-repository changes or release publication are involved.
+A new product tag does not itself trigger this separate repository: use **Run
+workflow** to build the latest tag. Native Go plugins remain disabled, matching
+the local script's `CGO_ENABLED=0` build policy.
