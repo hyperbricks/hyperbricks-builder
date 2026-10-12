@@ -118,7 +118,9 @@ jobs:
         working-directory: source
         run: |
           set -o pipefail
-          go test -json ./cmd/hyperbricks -run '^(TestRuntimeProcess|TestWindowsRuntime|TestResponseCache)' -count=1 -timeout=180s | tee ../test-results.jsonl
+          repetitions=1
+          if [[ "$GOOS" == windows ]]; then repetitions=5; fi
+          go test -json ./cmd/hyperbricks -run '^(TestRuntimeProcess|TestWindowsRuntime|TestResponseCache)' -count="$repetitions" -timeout=600s | tee ../test-results.jsonl
       - name: Require successful execution of the critical tests
         if: ${{ !cancelled() && hashFiles('test-results.jsonl') != '' }}
         run: python scripts/check-test-results.py test-results.jsonl "$GOOS"
