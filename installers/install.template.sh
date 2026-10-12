@@ -54,7 +54,7 @@ main() {
  cat > "$tmp/releases.awk" <<'HB_RELEASES_AWK'
 @@RELEASES_AWK@@
 HB_RELEASES_AWK
- api=https://api.github.com/repos/hyperbricks/hyperbricks
+ api=https://api.github.com/repos/hyperbricks/hyperbricks-builder
  : > "$tmp/releases.json"
  if [ -n "$version" ]; then
   fetch "$api/releases/tags/$version" "$tmp/page"
@@ -74,7 +74,7 @@ HB_RELEASES_AWK
  [ "$#" -eq 3 ] || fail 'Missing release checksums'
  tag=$1; archive_hash=$2; sidecar_hash=$3
  archive="hyperbricks_${tag}_${os}_${arch}.tar.gz"
- base="https://github.com/hyperbricks/hyperbricks/releases/download/$tag"
+ base="https://github.com/hyperbricks/hyperbricks-builder/releases/download/$tag"
  fetch "$base/$archive.sha256" "$tmp/checksum"
  [ "$(sha256 "$tmp/checksum")" = "$sidecar_hash" ] || fail 'Checksum file differs from GitHub digest'
  expected=$(awk -v name="$archive" 'NF==2 && $2==name {n++;hash=$1} END {if(n!=1 || NR!=1) exit 1;print hash}' "$tmp/checksum") || fail 'Invalid checksum file'

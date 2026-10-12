@@ -11,12 +11,15 @@ class FakeAPI:
         self.calls=[];self.assets=[];self.published=published;self.broken=broken
     def call(self,path,method='GET',data=None,binary=False):
         self.calls.append((path,method))
-        if path.startswith('/git/ref/'):return {'object':{'type':'commit','sha':'a'*40}}
-        if path.startswith('/compare/'):return {'status':'identical'}
+        if method != 'GET':
+            assert not path.startswith('https://api.github.com/repos/hyperbricks/hyperbricks/'), 'Product writes forbidden'
+        if '/git/ref/' in path:return {'object':{'type':'commit','sha':('c' if path.startswith('/') else 'a')*40}}
+        if '/compare/' in path:return {'status':'identical'}
         if path.startswith('/releases?'):
             return [{'tag_name':'v1.0.0-beta','draft':False}] if self.published else []
         if path=='/releases' and method=='POST':
-            return {'id':1,'assets':[],'upload_url':'https://uploads.github.com/repos/hyperbricks/hyperbricks/releases/1/assets{?name,label}'}
+            assert data['target_commitish'] == 'c'*40
+            return {'id':1,'assets':[],'upload_url':'https://uploads.github.com/repos/hyperbricks/hyperbricks-builder/releases/1/assets{?name,label}'}
         if path.startswith('https://uploads.'):
             from urllib.parse import parse_qs,urlparse
             name=parse_qs(urlparse(path).query)['name'][0]
@@ -28,19 +31,24 @@ class FakeAPI:
 
 class Publication(unittest.TestCase):
     def test_publish_after_verified_uploads(self):
-        api=FakeAPI();pub.publish(api,'v1.0.0-beta','a'*40,{'a':b'one','b':b'two'})
+        api=FakeAPI();pub.publish(api,'v1.0.0-beta','a'*40,{'a':b'one','b':b'two'},'c'*40)
         self.assertEqual(api.calls[-1],('/releases/1','PATCH'))
     def test_bad_upload_stays_draft(self):
         api=FakeAPI(broken=True)
-        with self.assertRaises(ValueError):pub.publish(api,'v1.0.0-beta','a'*40,{'a':b'one'})
+        with self.assertRaises(ValueError):pub.publish(api,'v1.0.0-beta','a'*40,{'a':b'one'},'c'*40)
         self.assertFalse(any(method=='PATCH' for _,method in api.calls))
     def test_published_release_is_not_modified(self):
         api=FakeAPI(published=True)
-        with self.assertRaises(ValueError):pub.publish(api,'v1.0.0-beta','a'*40,{'a':b'one'})
+        with self.assertRaises(ValueError):pub.publish(api,'v1.0.0-beta','a'*40,{'a':b'one'},'c'*40)
         self.assertTrue(all(method=='GET' for _,method in api.calls))
+    def test_product_write_is_rejected(self):
+        api=pub.GitHub('unused')
+        with self.assertRaises(ValueError):
+            api.call('https://api.github.com/repos/hyperbricks/hyperbricks/releases','POST',{})
+
     def test_moved_tag_is_rejected(self):
         api=FakeAPI()
-        with self.assertRaises(ValueError):pub.publish(api,'v1.0.0-beta','b'*40,{'a':b'one'})
+        with self.assertRaises(ValueError):pub.publish(api,'v1.0.0-beta','b'*40,{'a':b'one'},'c'*40)
         self.assertTrue(all(method=='GET' for _,method in api.calls))
 
 if __name__=='__main__':unittest.main()

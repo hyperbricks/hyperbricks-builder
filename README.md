@@ -98,24 +98,21 @@ actual execution and safe replacement; the Windows product job also tests its
 freshly built executable through the installer. Windows process/cache tests run
 five times per job, and a failure in any repetition fails the job.
 
-For release publication, manually run the workflow on builder `main`, leave
-`source_ref` empty and explicitly enable **publish**. All five product builds
-and the three installer test jobs must succeed first. Publication validates the
-existing product tag against the tested commit and upstream `main`, assembles a
-draft release in `hyperbricks/hyperbricks`, verifies uploaded digests, then
-publishes it. It never intentionally creates/moves a tag, modifies a published
-release, or overwrites an asset. Installer copies and hashes are release assets.
-A failed upload leaves a draft for inspection; a rerun accepts only matching
-existing assets and source provenance.
+For release publication, manually run **Build latest HyperBricks tag** on builder
+`main`, leave `source_ref` empty and enable **publish**. All five native builds,
+the product tests (five repetitions on Windows), and all five native installer
+jobs must succeed before publication. Push and pull-request runs never publish.
 
-Cross-repository publication needs a builder Actions secret named
-`RELEASE_TOKEN`: a fine-grained token restricted to `hyperbricks/hyperbricks`,
-with **Contents: read and write**. The normal builder `GITHUB_TOKEN` cannot write
-to the product repository. Only the publication step receives this secret;
-PR builds and source-ref test runs cannot use it. Do not paste credentials into
-source, logs or chat. Without this secret, publication fails with a clear error.
-No tag trigger or product-repository workflow is installed by this setup.
+Publication uploads the verified packages, installer scripts and SHA-256 files
+to a draft release in **hyperbricks/hyperbricks-builder**. Its version tag points
+to the builder commit used by the workflow. Release metadata records the exact
+product tag and source commit; the product repository is only read, never
+modified. Uploaded digests are verified before the draft becomes public.
+Published releases and assets are never overwritten. An interrupted upload can
+resume only when the draft's source and existing asset hashes match.
 
-Publication is opt-in and currently not activated. Website distribution routes
-must only be enabled after native installer tests pass; installation of a real
-version additionally requires a complete published product release.
+Only the publication job receives `contents: write`, using the builder's own
+`GITHUB_TOKEN`. No additional token or product-repository credentials are needed.
+The installers discover and download releases from **hyperbricks-builder**.
+Website distribution still requires copying the tested installers to the site
+and checking an installation against the published download assets.

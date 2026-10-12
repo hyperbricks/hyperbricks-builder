@@ -94,7 +94,7 @@ function Install-HyperBricks([string]$RequestedVersion, [string]$Destination) {
     [void][IO.Directory]::CreateDirectory($temp)
     $stage = $null
     try {
-        $api = 'https://api.github.com/repos/hyperbricks/hyperbricks'
+        $api = 'https://api.github.com/repos/hyperbricks/hyperbricks-builder'
         $pageFile = Join-Path $temp 'release.json'
         $releases = @()
         if ($RequestedVersion -ne '') {
@@ -113,7 +113,7 @@ function Install-HyperBricks([string]$RequestedVersion, [string]$Destination) {
         $name = "hyperbricks_${tag}_windows_amd64.zip"
         $archiveAsset = @($release.assets | Where-Object { $_.name -ceq $name })[0]
         $checksumAsset = @($release.assets | Where-Object { $_.name -ceq "$name.sha256" })[0]
-        $base = "https://github.com/hyperbricks/hyperbricks/releases/download/$tag"
+        $base = "https://github.com/hyperbricks/hyperbricks-builder/releases/download/$tag"
         $checksum = Join-Path $temp 'checksum'; $archive = Join-Path $temp 'archive.zip'
         $null = Get-HBDownload "$base/$name.sha256" $checksum
         if ((Get-FileHash $checksum -Algorithm SHA256).Hash.ToLowerInvariant() -cne $checksumAsset.digest.Substring(7)) { throw 'Checksum file differs from GitHub digest' }
