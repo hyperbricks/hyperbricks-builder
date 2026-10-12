@@ -101,7 +101,7 @@ five times per job, and a failure in any repetition fails the job.
 For release publication, manually run **Build latest HyperBricks tag** on builder
 `main`, leave `source_ref` empty and enable **publish**. All five native builds,
 the product tests (five repetitions on Windows), and all five native installer
-jobs must succeed before publication. Push and pull-request runs never publish.
+jobs must succeed before publication. Pushes do not start workflows. Pull-request checks never publish.
 
 Publication uploads the verified packages, installer scripts and SHA-256 files
 to a draft release in **hyperbricks/hyperbricks-builder**. Its version tag points

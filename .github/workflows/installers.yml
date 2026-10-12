@@ -1,15 +1,6 @@
 name: Test installers
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - installers/**
-      - scripts/build-installers.py
-      - tests/test_installers.py
-      - tests/test-windows-installer.ps1
-      - .github/workflows/installers.yml
-      - .gitattributes
   pull_request:
     paths:
       - installers/**
