@@ -65,4 +65,26 @@ shutil.copyfile(root/name,out);print('200',end='')
         for fault in ('hash','traversal','symlink','redirect','interrupted','version'):
             with self.subTest(fault=fault):self.exercise(fault)
 
+@unittest.skipIf(os.name == 'nt', 'POSIX shell output')
+class PathInstructions(unittest.TestCase):
+    def test_displayed_commands_update_only_disposable_profiles(self):
+        import shutil
+        source=(ROOT/'installers/install.sh').read_text().split('# Entry point')[0]
+        for shell, label, profile in [('bash','Bash:', '.bashrc'),('zsh','Zsh:', '.zshrc')]:
+            binary=shutil.which(shell)
+            if binary is None: continue
+            with tempfile.TemporaryDirectory() as directory:
+                home=Path(directory)
+                for destination in (str(home/'.local/bin'), str(home/"space and quote/it's $literal")):
+                    env=dict(os.environ,HOME=str(home),ZDOTDIR=str(home),PATH='/usr/bin:/bin')
+                    result=subprocess.run(['sh','-c',source+'\ndestination=$1\npath_hint','test',destination],env=env,text=True,capture_output=True,check=True)
+                    self.assertIn('echo $SHELL',result.stdout)
+                    self.assertIn('hyperbricks version',result.stdout)
+                    section=result.stdout.split(label+'\n',1)[1].split('\n\n',1)[0]
+                    commands='\n'.join(line.strip() for line in section.splitlines())
+                    self.assertFalse((home/profile).exists())
+                    actual=subprocess.check_output([binary,'-c',commands+'\nprintf "%s" "$PATH"'],env=env,text=True)
+                    self.assertEqual(actual,destination+':/usr/bin:/bin')
+                    (home/profile).unlink()
+
 if __name__=='__main__':unittest.main()

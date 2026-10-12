@@ -42,6 +42,28 @@ function Test-HBVersion([string]$Tag) {
     }
     return $true
 }
+function Get-HBPathInstructions([string]$Destination) {
+    $quotedBin = $Destination.Replace("'", "''")
+    $quotedExecutable = (Join-Path $Destination 'hyperbricks.exe').Replace("'", "''")
+    return @"
+
+Check the installed executable:
+
+  & '$quotedExecutable' version
+
+If "hyperbricks version" is not recognized, add HyperBricks to your user PATH:
+
+  `$bin = '$quotedBin'
+  `$path = [Environment]::GetEnvironmentVariable("Path", "User")
+  if (`$bin -notin (`$path -split ";")) {
+      [Environment]::SetEnvironmentVariable("Path", "`$bin;`$path", "User")
+  }
+
+Close and reopen your terminal, then verify:
+
+  hyperbricks version
+"@
+}
 function Install-HyperBricks([string]$RequestedVersion, [string]$Destination) {
     if ($RequestedVersion -ne '' -and !(Test-HBVersion $RequestedVersion)) { throw 'Invalid version tag' }
     if (![IO.Path]::IsPathRooted($Destination)) { throw 'Install directory must be absolute' }
@@ -91,7 +113,7 @@ function Install-HyperBricks([string]$RequestedVersion, [string]$Destination) {
         else { [IO.File]::Move($stage, $target) }
         $stage = $null
         Write-Host "Installed HyperBricks ${tag}: $target"
-        Write-Host "Add this directory to PATH if needed: $Destination"
+        Write-Host (Get-HBPathInstructions $Destination)
     } finally {
         if ($stage -and [IO.File]::Exists($stage)) { [IO.File]::Delete($stage) }
         if ([IO.Directory]::Exists($temp)) { [IO.Directory]::Delete($temp, $true) }

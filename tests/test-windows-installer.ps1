@@ -10,6 +10,15 @@ Assert (!(Test-HBVersion 'v1.0.0-beta.01')) 'Invalid numeric prerelease'
 try { $null=Get-HBDownload 'https://evil.example/binary' 'unused'; throw 'UNEXPECTED_SUCCESS' }
 catch { Assert ($_.Exception.Message -ne 'UNEXPECTED_SUCCESS') 'Untrusted URL accepted' }
 
+# Validate the displayed commands without changing any environment settings.
+$instructions = Get-HBPathInstructions "C:\Users\O'Brien\HyperBricks"
+$verifyLine = @($instructions -split "`n" | Where-Object { $_.Trim().StartsWith('& ') })[0]
+$null = [ScriptBlock]::Create($verifyLine)
+$commands = (($instructions -split 'user PATH:')[1] -split 'Close and reopen')[0]
+$null = [ScriptBlock]::Create($commands)
+Assert ($commands.Contains("O''Brien")) 'Displayed path is not safely quoted'
+Assert ($commands.Contains('[Environment]::SetEnvironmentVariable')) 'Persistent PATH instruction missing'
+
 $fixture=Join-Path ([IO.Path]::GetTempPath()) ('hb-installer-test-'+[Guid]::NewGuid())
 [void][IO.Directory]::CreateDirectory($fixture)
 try {

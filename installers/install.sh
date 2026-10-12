@@ -28,6 +28,33 @@ fetch() {
   esac
  done
 }
+quote_sh() {
+ printf "'"
+ printf '%s' "$1" | sed "s/'/'\\\\''/g"
+ printf "'"
+}
+path_hint() {
+ if [ "$destination" = "$HOME/.local/bin" ]; then
+  path_line='export PATH="$HOME/.local/bin:$PATH"'
+ else
+  quoted_destination=$(quote_sh "$destination")
+  path_line="export PATH=$quoted_destination:\"\$PATH\""
+ fi
+ quoted_line=$(quote_sh "$path_line")
+ printf '\n%s\n\n' 'Check which shell you use:'
+ printf '  echo $SHELL\n\n'
+ printf '%s\n\n' 'Choose the commands for your shell:'
+ printf 'Zsh:\n'
+ printf '%s\n' "  printf '%s\\n' $quoted_line >> \"\${ZDOTDIR:-\$HOME}/.zshrc\""
+ printf '  source "${ZDOTDIR:-$HOME}/.zshrc"\n\n'
+ printf 'Bash:\n'
+ printf '%s\n' "  printf '%s\\n' $quoted_line >> ~/.bashrc"
+ printf '  source ~/.bashrc\n\n'
+ printf '%s\n\n' 'Verify the installation:'
+ printf '  hyperbricks version\n\n'
+ printf '%s\n' 'Note for Bash login terminals: your login profile must load ~/.bashrc'
+ printf '%s\n' 'for this setting to apply automatically in future sessions.'
+}
 main() {
  version=''; destination="${HOME:?HOME is required}/.local/bin"
  while [ "$#" -gt 0 ]; do
@@ -85,7 +112,7 @@ main() {
  awk -v tag="$tag" '$0==tag {found=1} END {exit !found}' "$tmp/version" || fail 'Executable version differs from release'
  mv -f "$stage" "$destination/hyperbricks"; stage=''
  printf 'Installed HyperBricks %s: %s/hyperbricks\n' "$tag" "$destination"
- printf 'Add this directory to PATH if needed: %s\n' "$destination"
+ path_hint
 }
 # Entry point
 main "$@"
