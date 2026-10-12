@@ -1,0 +1,6 @@
+# Distribution script hashes must be identical on every runner and website.
+*.sh text eol=lf
+*.ps1 text eol=lf
+*.awk text eol=lf
+*.sha256 text eol=lf
+*.py text eol=lf
