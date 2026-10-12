@@ -6,8 +6,6 @@ $code = [IO.File]::ReadAllText((Join-Path $root 'installers/install.ps1'))
 # Load the production functions without invoking the installer entry point.
 . ([ScriptBlock]::Create(($code -split '# Entry point')[0]))
 function Assert($Condition, [string]$Message) { if (!$Condition) { throw $Message } }
-Assert ((Compare-HBVersion 'v1.10.0-beta.10' 'v1.10.0-beta.2') -gt 0) 'Numeric prerelease ordering'
-Assert ((Compare-HBVersion 'v1.10.0' 'v1.10.0-beta.10') -gt 0) 'Stable ordering'
 Assert (!(Test-HBVersion 'v1.0.0-beta.01')) 'Invalid numeric prerelease'
 try { $null=Get-HBDownload 'https://evil.example/binary' 'unused'; throw 'UNEXPECTED_SUCCESS' }
 catch { Assert ($_.Exception.Message -ne 'UNEXPECTED_SUCCESS') 'Untrusted URL accepted' }
@@ -23,39 +21,30 @@ try {
     [IO.Compression.ZipFile]::CreateFromDirectory($payload,$archive)
     $hash=(Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
     [IO.File]::WriteAllText((Join-Path $fixture "$name.sha256"),"$hash  $name`n",[Text.UTF8Encoding]::new($false))
-    $sideHash=(Get-FileHash (Join-Path $fixture "$name.sha256") -Algorithm SHA256).Hash.ToLowerInvariant()
-    $assets=@()
-    foreach($platform in @('darwin_amd64','darwin_arm64','linux_amd64','linux_arm64','windows_amd64')) {
-        $ext=if($platform.StartsWith('windows')){'.zip'}else{'.tar.gz'}
-        $assetName="hyperbricks_${Tag}_${platform}${ext}"
-        $assets+=@{name=$assetName;state='uploaded';digest="sha256:$hash"}
-        $assets+=@{name="$assetName.sha256";state='uploaded';digest="sha256:$sideHash"}
-    }
-    $release=@{tag_name=$Tag;draft=$false;assets=$assets}
-    [IO.File]::WriteAllText((Join-Path $fixture 'metadata.json'),(ConvertTo-Json -InputObject @($release) -Depth 8))
-    [IO.File]::WriteAllText((Join-Path $fixture 'release.json'),(ConvertTo-Json -InputObject $release -Depth 8))
-    Assert ((Select-HBRelease @($release) $Tag).tag_name -ceq $Tag) 'Exact tag selection'
-    try { $null=Select-HBRelease @($release) 'v99.99.99'; throw 'UNEXPECTED_SUCCESS' }
-    catch { Assert ($_.Exception.Message -ne 'UNEXPECTED_SUCCESS') 'Unknown tag accepted' }
-    $incomplete=@{tag_name='v99.99.99';draft=$false;assets=@()}
-    Assert ((Select-HBRelease @($incomplete,$release) '').tag_name -ceq $Tag) 'Incomplete release selected'
-    $draft=@{tag_name='v99.99.99';draft=$true;assets=$assets}
-    Assert ((Select-HBRelease @($draft,$release) '').tag_name -ceq $Tag) 'Draft selected'
+    [IO.File]::WriteAllText((Join-Path $fixture 'version.md'),"$Tag`n",[Text.UTF8Encoding]::new($false))
     $script:failure=''
+    $script:explicit=$false
     # Replace transport only; exercise the real selection, hashing, extraction,
     # version execution and atomic replacement against a native binary.
     function Get-HBDownload([string]$Url,[string]$Path) {
         if($script:failure -eq 'interrupted'){throw 'Simulated interrupted download'}
-        if($Url.Contains('?per_page=')){$file='metadata.json'}
-        elseif($Url.Contains('/releases/tags/')){$file='release.json'}
-        else{$file=$Url.Substring($Url.LastIndexOf('/')+1)}
+        Assert (!$Url.Contains('api.github.com')) 'Installer called GitHub API'
+        if ($script:explicit) { Assert (!$Url.EndsWith('/version.md')) 'Explicit tag fetched version.md' }
+        $file=$Url.Substring($Url.LastIndexOf('/')+1)
         Copy-Item (Join-Path $fixture $file) $Path
         return ''
     }
     $dest=Join-Path $fixture 'installed'
     Install-HyperBricks '' $dest
     Assert ((Get-FileHash (Join-Path $dest 'hyperbricks.exe')).Hash -eq (Get-FileHash $Binary).Hash) 'Installed binary changed'
+    $script:explicit=$true
     Install-HyperBricks $Tag $dest
+    $script:explicit=$false
+    [IO.File]::WriteAllText((Join-Path $fixture 'version.md'),"invalid/version`n")
+    try { Install-HyperBricks '' $dest;throw 'UNEXPECTED_SUCCESS' }
+    catch { Assert ($_.Exception.Message -ne 'UNEXPECTED_SUCCESS') 'Invalid version accepted' }
+    Assert ((Get-FileHash (Join-Path $dest 'hyperbricks.exe')).Hash -eq (Get-FileHash $Binary).Hash) 'Invalid version damaged installation'
+    [IO.File]::WriteAllText((Join-Path $fixture 'version.md'),"$Tag`n",[Text.UTF8Encoding]::new($false))
     foreach($failure in @('interrupted','hash')) {
         $script:failure=$failure
         if($failure -eq 'hash'){[IO.File]::WriteAllText($archive,'corrupt')}
@@ -71,12 +60,6 @@ try {
         try { $null=$z.CreateEntry($member) } finally { $z.Dispose() }
         $badHash=(Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant()
         [IO.File]::WriteAllText((Join-Path $fixture "$name.sha256"),"$badHash  $name`n",[Text.UTF8Encoding]::new($false))
-        $badSide=(Get-FileHash (Join-Path $fixture "$name.sha256") -Algorithm SHA256).Hash.ToLowerInvariant()
-        foreach($asset in $assets) {
-            if($asset.name -ceq $name){$asset.digest="sha256:$badHash"}
-            if($asset.name -ceq "$name.sha256"){$asset.digest="sha256:$badSide"}
-        }
-        [IO.File]::WriteAllText((Join-Path $fixture 'metadata.json'),(ConvertTo-Json -InputObject @($release) -Depth 8))
         try { Install-HyperBricks '' $dest;throw 'UNEXPECTED_SUCCESS' }
         catch { Assert ($_.Exception.Message -ne 'UNEXPECTED_SUCCESS') 'Unsafe archive accepted' }
         Assert ((Get-FileHash (Join-Path $dest 'hyperbricks.exe')).Hash -eq (Get-FileHash $Binary).Hash) 'Unsafe archive damaged installation'

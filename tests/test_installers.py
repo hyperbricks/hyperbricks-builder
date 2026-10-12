@@ -1,6 +1,5 @@
 import hashlib
 import io
-import json
 import os
 from pathlib import Path
 import subprocess
@@ -10,38 +9,6 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 PLATFORMS = ['darwin_amd64','darwin_arm64','linux_amd64','linux_arm64','windows_amd64']
-
-def release(tag, blobs=None):
-    assets=[]
-    for platform in PLATFORMS:
-        name=f'hyperbricks_{tag}_{platform}' + ('.zip' if platform.startswith('windows') else '.tar.gz')
-        for filename in (name,name+'.sha256'):
-            content=(blobs or {}).get(filename,b'fixture')
-            assets.append(dict(name=filename,state='uploaded',digest='sha256:'+hashlib.sha256(content).hexdigest()))
-    return dict(tag_name=tag,draft=False,assets=assets)
-
-class InstallerSelection(unittest.TestCase):
-    def select(self, releases, wanted=''):
-        return subprocess.run(['awk','-v','platform=darwin_arm64','-v',f'wanted={wanted}','-f',str(ROOT/'installers/releases.awk')],input=json.dumps(releases),text=True,capture_output=True)
-
-    def test_semver_complete_and_explicit(self):
-        versions=['v1.9.0','v1.10.0-beta.2','v1.10.0-beta.10','v1.10.0']
-        rows=[release(v) for v in versions]
-        self.assertTrue(self.select(rows).stdout.startswith('v1.10.0 '))
-        self.assertTrue(self.select(rows[:-1]).stdout.startswith('v1.10.0-beta.10 '))
-        rows[-1]['assets'].pop()
-        self.assertTrue(self.select(rows).stdout.startswith('v1.10.0-beta.10 '))
-        self.assertNotEqual(self.select(rows,'v1.10.0').returncode,0)
-        rows[2]['draft']=True
-        self.assertTrue(self.select(rows).stdout.startswith('v1.10.0-beta.2 '))
-        self.assertTrue(self.select(rows,'v1.9.0').stdout.startswith('v1.9.0 '))
-        self.assertNotEqual(self.select(rows,'v9.0.0').returncode,0)
-
-    def test_bad_json_and_tags(self):
-        for tag in ('../../bad','v01.2.3','v1.2.3-beta.01','v1.2.3-beta..1'):
-            self.assertNotEqual(self.select([release(tag)]).returncode,0,tag)
-        result=subprocess.run(['awk','-f',str(ROOT/'installers/releases.awk')],input='[{"tag_name":',text=True,capture_output=True)
-        self.assertNotEqual(result.returncode,0)
 
 @unittest.skipIf(os.name == "nt", "Unix installer; Windows has native PowerShell coverage")
 class ShellInstaller(unittest.TestCase):
@@ -61,27 +28,28 @@ class ShellInstaller(unittest.TestCase):
             for platform in PLATFORMS:
                 name=f'hyperbricks_{tag}_{platform}'+('.zip' if platform.startswith('windows') else '.tar.gz')
                 blobs[name]=data;blobs[name+'.sha256']=(hashlib.sha256(data).hexdigest()+'  '+name+'\n').encode()
-            metadata=release(tag,blobs)
             for name,blob in blobs.items(): (temp/name).write_bytes(blob)
             if fault=='hash':
                 for name in blobs:
                     if name.endswith('.tar.gz'): (temp/name).write_bytes(b'corrupt')
-            (temp/'metadata').write_text(json.dumps([metadata]))
-            (temp/'release').write_text(json.dumps(metadata))
+            (temp/'version.md').write_text('bad/version\n' if fault=='version' else tag+'\n')
             curl='''#!/usr/bin/env python3
 import os,sys,shutil
 from pathlib import Path
-args=sys.argv[1:];url=args[-1];out=args[args.index('--output')+1];headers=args[args.index('--dump-header')+1]
+args=sys.argv[1:];url=args[-1]
+assert 'api.github.com' not in url, 'Installer must not call GitHub API'
+if os.environ.get('EXPLICIT') == '1': assert 'version.md' not in url, 'Explicit tag must skip version lookup'
+out=args[args.index('--output')+1];headers=args[args.index('--dump-header')+1]
 root=Path(os.environ['FIXTURE']);fault=os.environ.get('FAULT','')
 if fault=='redirect':
  Path(headers).write_text('HTTP/1.1 302 Found\\r\\nLocation: https://evil.example/payload\\r\\n');print('302',end='');sys.exit(0)
 Path(headers).write_text('HTTP/1.1 200 OK\\r\\n')
 if fault=='interrupted': sys.exit(18)
-name='metadata' if '?per_page=' in url else ('release' if '/releases/tags/' in url else url.rsplit('/',1)[-1])
+name=url.rsplit('/',1)[-1]
 shutil.copyfile(root/name,out);print('200',end='')
 '''
             (fake/'curl').write_text(curl);(fake/'curl').chmod(0o755)
-            env=dict(os.environ,PATH=str(fake)+os.pathsep+os.environ['PATH'],FIXTURE=str(temp),FAULT=fault or '')
+            env=dict(os.environ,PATH=str(fake)+os.pathsep+os.environ['PATH'],FIXTURE=str(temp),FAULT=fault or '',EXPLICIT='1' if explicit else '0')
             args=['sh',str(ROOT/'installers/install.sh'),'--install-dir',str(target)]
             if explicit: args += ['--version',tag]
             result=subprocess.run(args,env=env,text=True,capture_output=True)
@@ -94,7 +62,7 @@ shutil.copyfile(root/name,out);print('200',end='')
     def test_install(self): self.exercise()
     def test_explicit_tag(self): self.exercise(explicit=True)
     def test_failures_preserve_installation(self):
-        for fault in ('hash','traversal','symlink','redirect','interrupted'):
+        for fault in ('hash','traversal','symlink','redirect','interrupted','version'):
             with self.subTest(fault=fault):self.exercise(fault)
 
 if __name__=='__main__':unittest.main()

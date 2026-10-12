@@ -3,6 +3,7 @@
 Creates a builder release tag; never writes to the product repository or
 overwrites published releases/assets. Uses the publication job GITHUB_TOKEN.
 """
+import base64
 import hashlib
 import io
 import json
@@ -135,6 +136,45 @@ def publish(api, tag, commit, files, builder_commit):
     verify_source(api,tag,commit)
     return api.call(f'/releases/{release_id}','PATCH',{'draft':False,'make_latest':'false'})
 
+def version_key(tag):
+    if not re.fullmatch(r'v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+\.)*[0-9A-Za-z-]+)?', tag):
+        raise ValueError('Invalid version file')
+    core, separator, pre = tag[1:].partition('-')
+    parts = []
+    for item in pre.split('.') if separator else []:
+        if item.isdigit() and len(item)>1 and item.startswith('0'):
+            raise ValueError('Invalid prerelease version')
+        parts.append((0, int(item)) if item.isdigit() else (1, item))
+    return tuple(map(int, core.split('.'))), not bool(separator), tuple(parts)
+
+def update_version(api, tag):
+    """Advance the public pointer only to a complete published builder release."""
+    incoming = version_key(tag)
+    release = api.call('/releases/tags/'+urllib.parse.quote(tag, safe=''))
+    if release['draft'] or release['tag_name'] != tag:
+        raise ValueError('Version pointer requires a published release')
+    for goos, arch in PLATFORMS:
+        name = f'hyperbricks_{tag}_{goos}_{arch}'+('.zip' if goos=='windows' else '.tar.gz')
+        for filename in (name, name+'.sha256'):
+            assets = [a for a in release['assets'] if a['name']==filename]
+            if len(assets)!=1 or assets[0].get('state')!='uploaded' or not re.fullmatch(r'sha256:[0-9a-f]{64}', assets[0].get('digest','')):
+                raise ValueError('Version pointer requires complete downloads')
+    current = None
+    try:
+        current = api.call('/contents/version.md?ref=main')
+    except urllib.error.HTTPError as error:
+        if error.code != 404: raise
+    if current is not None:
+        text = base64.b64decode(current['content']).decode('utf-8')
+        if not text.endswith('\n') or text.count('\n')!=1:
+            raise ValueError('Invalid existing version.md')
+        if version_key(text[:-1]) >= incoming:
+            return  # Never downgrade the published channel.
+    data = {'message':'Update published version to '+tag, 'branch':'main',
+            'content':base64.b64encode((tag+'\n').encode()).decode()}
+    if current is not None: data['sha']=current['sha']
+    api.call('/contents/version.md', 'PUT', data)
+
 if __name__=='__main__':
     token=os.environ.get('RELEASE_TOKEN')
     if not token: raise SystemExit('The publication job requires its GITHUB_TOKEN with contents:write on hyperbricks-builder')
@@ -147,5 +187,7 @@ if __name__=='__main__':
         if (installer_dir/(name+'.sha256')).read_bytes()!=checksum: raise SystemExit('Stale installer checksum')
         files[name]=data;files[name+'.sha256']=checksum
     files['SHA256SUMS']=''.join(f'{sha(data)}  {name}\n' for name,data in sorted(files.items())).encode()
-    result=publish(GitHub(token),tag,commit,files,os.environ['GITHUB_SHA'])
+    api=GitHub(token)
+    result=publish(api,tag,commit,files,os.environ['GITHUB_SHA'])
+    update_version(api,tag)
     print('Published verified release:',result['html_url'])

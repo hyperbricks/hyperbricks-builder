@@ -83,4 +83,43 @@ class Publication(unittest.TestCase):
         with self.assertRaises(ValueError):pub.publish(api,'v1.0.0-beta','b'*40,{'a':b'one'},'c'*40)
         self.assertTrue(all(method=='GET' for _,method in api.calls))
 
+
+class VersionPointer(unittest.TestCase):
+    def api(self, current='v1.0.0-beta', draft=False, incomplete=False):
+        import base64
+        class API:
+            def __init__(self): self.writes=[]
+            def call(self,path,method='GET',data=None):
+                if method=='PUT': self.writes.append((path,data)); return {}
+                if path.startswith('/contents/'):
+                    return {'sha':'file-sha','content':base64.b64encode((current+'\n').encode()).decode()}
+                assets=[]
+                for os_name,arch in pub.PLATFORMS:
+                    name=f'hyperbricks_v1.1.0-beta_{os_name}_{arch}'+('.zip' if os_name=='windows' else '.tar.gz')
+                    for filename in (name,name+'.sha256'):
+                        assets.append({'name':filename,'state':'uploaded','digest':'sha256:'+'a'*64})
+                if incomplete: assets.pop()
+                return {'tag_name':'v1.1.0-beta','draft':draft,'assets':assets}
+        return API()
+    def test_complete_release_advances_pointer(self):
+        import base64
+        api=self.api();pub.update_version(api,'v1.1.0-beta')
+        path,data=api.writes[0]
+        self.assertEqual(path,'/contents/version.md')
+        self.assertEqual(data['branch'],'main')
+        self.assertEqual(data['sha'],'file-sha')
+        self.assertEqual(base64.b64decode(data['content']),b'v1.1.0-beta\n')
+    def test_never_downgrades_or_rewrites_same_version(self):
+        for current in ('v2.0.0','v1.1.0','v1.1.0-beta'):
+            api=self.api(current=current);pub.update_version(api,'v1.1.0-beta')
+            self.assertEqual(api.writes,[])
+    def test_draft_and_incomplete_releases_cannot_advance(self):
+        for flags in ({'draft':True},{'incomplete':True}):
+            api=self.api(**flags)
+            with self.assertRaises(ValueError):pub.update_version(api,'v1.1.0-beta')
+            self.assertEqual(api.writes,[])
+    def test_semver_ordering(self):
+        self.assertGreater(pub.version_key('v1.1.0-beta.10'),pub.version_key('v1.1.0-beta.2'))
+        self.assertGreater(pub.version_key('v1.1.0'),pub.version_key('v1.1.0-beta.10'))
+
 if __name__=='__main__':unittest.main()

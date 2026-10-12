@@ -11,17 +11,16 @@ fetch() {
  url=$1; output=$2; redirects=0
  while :; do
   case "$url" in
-   https://api.github.com/*|https://github.com/*|https://release-assets.githubusercontent.com/*|https://objects.githubusercontent.com/*) ;;
+   https://raw.githubusercontent.com/*|https://github.com/*|https://release-assets.githubusercontent.com/*|https://objects.githubusercontent.com/*) ;;
    *) fail "Unapproved download URL: $url";;
   esac
   # Never let curl follow redirects itself; validate every destination first.
   status=$(curl -q --proto '=https' --tlsv1.2 --silent --show-error --connect-timeout 20 --max-time 300 \
-   --header 'Accept: application/vnd.github+json' --header 'Cache-Control: no-cache' \
+   --header 'Cache-Control: no-cache' \
    --dump-header "$tmp/headers" --output "$output" --write-out '%{http_code}' "$url") || fail 'Download failed'
   case "$status" in
    200) return;;
    301|302|303|307|308)
-    case "$url" in https://api.github.com/*) fail 'API redirect refused';; esac
     redirects=$((redirects+1)); [ "$redirects" -le 4 ] || fail 'Too many redirects'
     url=$(awk 'tolower($1)=="location:" {sub(/^[^:]*:[ \t]*/, "");sub(/\r$/, "");print}' "$tmp/headers")
     ;;
@@ -51,137 +50,23 @@ main() {
  stage=''
  trap 'rm -rf "$tmp"; if [ -n "$stage" ]; then rm -f "$stage"; fi' EXIT
  trap 'exit 1' HUP INT TERM
- cat > "$tmp/releases.awk" <<'HB_RELEASES_AWK'
-# Strict JSON reader and SemVer selector. Only expected release fields are used.
-function die(s) { print "Invalid release metadata: " s > "/dev/stderr"; exit 1 }
-function ws() { while (substr(src,pos,1) ~ /[ \t\r\n]/ && pos<=length(src)) pos++ }
-function str(   c,e,out,h,i,n) {
- if (substr(src,pos++,1)!="\"") die("string expected")
- out=""
- while(pos<=length(src)) {
-  c=substr(src,pos++,1)
-  if(c=="\"") return out
-  if(c=="\\") {
-   e=substr(src,pos++,1)
-   if(e=="u") {
-    h=substr(src,pos,4); if(h !~ /^[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]$/) die("unicode escape")
-    pos+=4; n=0; h=tolower(h)
-    for(i=1;i<=4;i++) n=n*16+index("0123456789abcdef",substr(h,i,1))-1
-    c=(n>=32 && n<127)?sprintf("%c",n):"?"
-   } else if(e=="\"" || e=="\\" || e=="/") c=e
-   else if(e ~ /^[bfnrt]$/) c="?"
-   else die("escape")
-  } else if(c ~ /[[:cntrl:]]/) die("control character")
-  out=out c
- }
- die("unterminated string")
-}
-function field(path,v,   a,n,r,k) {
- n=split(path,a,"/"); r=a[2]; k=a[3]
- if(n==3 && (k=="tag_name" || k=="draft")) data[r,k]=v
- if(n==5 && k=="assets") asset[r,a[4],a[5]]=v
-}
-function value(path,depth,   c,k,v,i) {
- if(depth>80) die("nesting")
- ws(); c=substr(src,pos,1)
- if(c=="{") {
-  pos++; ws(); if(substr(src,pos,1)=="}") {pos++;return}
-  while(1) {
-   ws();k=str();ws();if(substr(src,pos++,1)!=":") die("colon")
-   value(path "/" k,depth+1);ws();c=substr(src,pos++,1)
-   if(c=="}") return
-   if(c!=",") die("object separator")
-  }
- } else if(c=="[") {
-  pos++;ws();if(substr(src,pos,1)=="]") {pos++;return}
-  i=0
-  while(1) {
-   if(depth==0) value("/" ++count,depth+1); else value(path "/" i++,depth+1)
-   ws();c=substr(src,pos++,1);if(c=="]") return
-   if(c!=",") die("array separator")
-  }
- } else {
-  if(c=="\"") v=str()
-  else {
-   v="";while(pos<=length(src) && substr(src,pos,1) !~ /[ \t\r\n,}\]]/) v=v substr(src,pos++,1)
-   if(v!="true" && v!="false" && v!="null" && v !~ /^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/) die("scalar")
-  }
-  field(path,v)
- }
-}
-function numeric(a,b) { if(length(a)!=length(b)) return length(a)>length(b)?1:-1; return a==b?0:("x" a>"x" b?1:-1) }
-function valid(t,   b,a,i,n) {
- if(t !~ /^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$/) return 0
- b=t;sub(/^[^-]*-?/,"",b)
- if(b!="") {n=split(b,a,".");for(i=1;i<=n;i++) if(a[i]=="" || a[i] ~ /^0[0-9]+$/) return 0}
- return 1
-}
-function compare(a,b,   aa,bb,pa,pb,na,nb,i,c) {
- pa=a;pb=b;sub(/^[^-]*-?/,"",pa);sub(/^[^-]*-?/,"",pb)
- sub(/-.*/,"",a);sub(/-.*/,"",b);sub(/^v/,"",a);sub(/^v/,"",b)
- split(a,aa,".");split(b,bb,".")
- for(i=1;i<=3;i++){c=numeric(aa[i],bb[i]);if(c) return c}
- if(pa==pb) return 0
- if(pa=="") return 1
- if(pb=="") return -1
- na=split(pa,aa,".");nb=split(pb,bb,".")
- for(i=1;i<=na && i<=nb;i++) {
-  if(aa[i]==bb[i]) continue
-  if(aa[i] ~ /^[0-9]+$/ && bb[i] ~ /^[0-9]+$/) return numeric(aa[i],bb[i])
-  if(aa[i] ~ /^[0-9]+$/) return -1
-  if(bb[i] ~ /^[0-9]+$/) return 1
-  return "x" aa[i]>"x" bb[i]?1:-1
- }
- return na>nb?1:-1
-}
-function hash(v) {return length(v)==71 && v ~ /^sha256:[0-9a-f]+$/}
-{src=src $0 "\n"}
-END {
- pos=1; ws(); while(pos<=length(src)){if(substr(src,pos,1)!="[") die("release array expected");value("",0);ws()}
- split("darwin_amd64 darwin_arm64 linux_amd64 linux_arm64 windows_amd64",platforms," ")
- for(r=1;r<=count;r++) {
-  tag=data[r,"tag_name"];if(data[r,"draft"]!="false" || !valid(tag)) continue
-  if(wanted!="" && tag!=wanted) continue
-  delete names
-  for(k in asset){split(k,parts,SUBSEP);if(parts[1]==r && parts[3]=="name") {
-   name=asset[k];digest=asset[r,parts[2],"digest"]
-   if(asset[r,parts[2],"state"]=="uploaded" && hash(digest)) names[name]=substr(digest,8)
-  }}
-  complete=1
-  for(i=1;i<=5;i++){ext=platforms[i] ~ /^windows/?".zip":".tar.gz";name="hyperbricks_" tag "_" platforms[i] ext;if(!(name in names) || !((name ".sha256") in names)) complete=0}
-  if(!complete) continue
-  name="hyperbricks_" tag "_" platform ".tar.gz"
-  if(best=="" || compare(tag,best)>0){best=tag;besthash=names[name];sidehash=names[name ".sha256"]}
- }
- if(best=="") {print "No complete published HyperBricks release found" > "/dev/stderr";exit 1}
- print best, besthash, sidehash
-}
-HB_RELEASES_AWK
- api=https://api.github.com/repos/hyperbricks/hyperbricks-builder
- : > "$tmp/releases.json"
- if [ -n "$version" ]; then
-  fetch "$api/releases/tags/$version" "$tmp/page"
-  printf '[\n' >> "$tmp/releases.json"; cat "$tmp/page" >> "$tmp/releases.json"; printf '\n]\n' >> "$tmp/releases.json"
- else
-  page=1
-  while :; do
-   fetch "$api/releases?per_page=100&page=$page" "$tmp/page"
-   cat "$tmp/page" >> "$tmp/releases.json"; printf '\n' >> "$tmp/releases.json"
-   # GitHub supplies a next relation while there are more pages.
-   if ! awk 'tolower($1)=="link:" && /rel="next"/ {found=1} END {exit !found}' "$tmp/headers"; then break; fi
-   page=$((page+1)); [ "$page" -le 1000 ] || fail 'Release listing exceeds pagination limit'
-  done
+ if [ -z "$version" ]; then
+  fetch 'https://raw.githubusercontent.com/hyperbricks/hyperbricks-builder/main/version.md' "$tmp/version.md"
+  [ "$(awk 'END {print NR}' "$tmp/version.md")" = 1 ] || fail 'Invalid version file'
+  version=$(cat "$tmp/version.md")
  fi
- selection=$(awk -v wanted="$version" -v platform="${os}_${arch}" -f "$tmp/releases.awk" "$tmp/releases.json") || fail 'Release selection failed'
- set -- $selection
- [ "$#" -eq 3 ] || fail 'Missing release checksums'
- tag=$1; archive_hash=$2; sidecar_hash=$3
+ printf '%s\n' "$version" | awk '
+  NR != 1 {exit 1}
+  !/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+\.)*[0-9A-Za-z-]+)?$/ {exit 1}
+  {v=$0; sub(/^v[0-9]+\.[0-9]+\.[0-9]+-?/, "", v); n=split(v,a,"."); for(i=1;i<=n;i++) if(a[i] ~ /^0[0-9]+$/) exit 1}
+ ' || fail 'Invalid version tag'
+ tag=$version
  archive="hyperbricks_${tag}_${os}_${arch}.tar.gz"
  base="https://github.com/hyperbricks/hyperbricks-builder/releases/download/$tag"
  fetch "$base/$archive.sha256" "$tmp/checksum"
- [ "$(sha256 "$tmp/checksum")" = "$sidecar_hash" ] || fail 'Checksum file differs from GitHub digest'
  expected=$(awk -v name="$archive" 'NF==2 && $2==name {n++;hash=$1} END {if(n!=1 || NR!=1) exit 1;print hash}' "$tmp/checksum") || fail 'Invalid checksum file'
- [ "$expected" = "$archive_hash" ] || fail 'Archive checksum differs from GitHub digest'
+ [ "${#expected}" = 64 ] || fail 'Invalid SHA-256'
+ case "$expected" in *[!0-9a-f]*) fail 'Invalid SHA-256';; esac
  fetch "$base/$archive" "$tmp/archive"
  [ "$(sha256 "$tmp/archive")" = "$expected" ] || fail 'Archive SHA-256 mismatch'
  tar -tzf "$tmp/archive" > "$tmp/members" || fail 'Invalid archive'

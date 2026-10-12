@@ -4,7 +4,7 @@ import hashlib
 import sys
 root = Path(__file__).resolve().parents[1]
 folder = root / 'installers'
-shell = (folder / 'install.template.sh').read_text().replace('@@RELEASES_AWK@@', (folder / 'releases.awk').read_text().rstrip())
+shell = (folder / 'install.template.sh').read_text()
 outputs = {folder / 'install.sh': shell.encode()}
 if (folder / 'install.ps1').exists():
     outputs[folder / 'install.ps1.sha256'] = (hashlib.sha256((folder / 'install.ps1').read_bytes()).hexdigest() + '  install.ps1\n').encode()

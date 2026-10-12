@@ -11,17 +11,16 @@ fetch() {
  url=$1; output=$2; redirects=0
  while :; do
   case "$url" in
-   https://api.github.com/*|https://github.com/*|https://release-assets.githubusercontent.com/*|https://objects.githubusercontent.com/*) ;;
+   https://raw.githubusercontent.com/*|https://github.com/*|https://release-assets.githubusercontent.com/*|https://objects.githubusercontent.com/*) ;;
    *) fail "Unapproved download URL: $url";;
   esac
   # Never let curl follow redirects itself; validate every destination first.
   status=$(curl -q --proto '=https' --tlsv1.2 --silent --show-error --connect-timeout 20 --max-time 300 \
-   --header 'Accept: application/vnd.github+json' --header 'Cache-Control: no-cache' \
+   --header 'Cache-Control: no-cache' \
    --dump-header "$tmp/headers" --output "$output" --write-out '%{http_code}' "$url") || fail 'Download failed'
   case "$status" in
    200) return;;
    301|302|303|307|308)
-    case "$url" in https://api.github.com/*) fail 'API redirect refused';; esac
     redirects=$((redirects+1)); [ "$redirects" -le 4 ] || fail 'Too many redirects'
     url=$(awk 'tolower($1)=="location:" {sub(/^[^:]*:[ \t]*/, "");sub(/\r$/, "");print}' "$tmp/headers")
     ;;
@@ -51,34 +50,23 @@ main() {
  stage=''
  trap 'rm -rf "$tmp"; if [ -n "$stage" ]; then rm -f "$stage"; fi' EXIT
  trap 'exit 1' HUP INT TERM
- cat > "$tmp/releases.awk" <<'HB_RELEASES_AWK'
-@@RELEASES_AWK@@
-HB_RELEASES_AWK
- api=https://api.github.com/repos/hyperbricks/hyperbricks-builder
- : > "$tmp/releases.json"
- if [ -n "$version" ]; then
-  fetch "$api/releases/tags/$version" "$tmp/page"
-  printf '[\n' >> "$tmp/releases.json"; cat "$tmp/page" >> "$tmp/releases.json"; printf '\n]\n' >> "$tmp/releases.json"
- else
-  page=1
-  while :; do
-   fetch "$api/releases?per_page=100&page=$page" "$tmp/page"
-   cat "$tmp/page" >> "$tmp/releases.json"; printf '\n' >> "$tmp/releases.json"
-   # GitHub supplies a next relation while there are more pages.
-   if ! awk 'tolower($1)=="link:" && /rel="next"/ {found=1} END {exit !found}' "$tmp/headers"; then break; fi
-   page=$((page+1)); [ "$page" -le 1000 ] || fail 'Release listing exceeds pagination limit'
-  done
+ if [ -z "$version" ]; then
+  fetch 'https://raw.githubusercontent.com/hyperbricks/hyperbricks-builder/main/version.md' "$tmp/version.md"
+  [ "$(awk 'END {print NR}' "$tmp/version.md")" = 1 ] || fail 'Invalid version file'
+  version=$(cat "$tmp/version.md")
  fi
- selection=$(awk -v wanted="$version" -v platform="${os}_${arch}" -f "$tmp/releases.awk" "$tmp/releases.json") || fail 'Release selection failed'
- set -- $selection
- [ "$#" -eq 3 ] || fail 'Missing release checksums'
- tag=$1; archive_hash=$2; sidecar_hash=$3
+ printf '%s\n' "$version" | awk '
+  NR != 1 {exit 1}
+  !/^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+\.)*[0-9A-Za-z-]+)?$/ {exit 1}
+  {v=$0; sub(/^v[0-9]+\.[0-9]+\.[0-9]+-?/, "", v); n=split(v,a,"."); for(i=1;i<=n;i++) if(a[i] ~ /^0[0-9]+$/) exit 1}
+ ' || fail 'Invalid version tag'
+ tag=$version
  archive="hyperbricks_${tag}_${os}_${arch}.tar.gz"
  base="https://github.com/hyperbricks/hyperbricks-builder/releases/download/$tag"
  fetch "$base/$archive.sha256" "$tmp/checksum"
- [ "$(sha256 "$tmp/checksum")" = "$sidecar_hash" ] || fail 'Checksum file differs from GitHub digest'
  expected=$(awk -v name="$archive" 'NF==2 && $2==name {n++;hash=$1} END {if(n!=1 || NR!=1) exit 1;print hash}' "$tmp/checksum") || fail 'Invalid checksum file'
- [ "$expected" = "$archive_hash" ] || fail 'Archive checksum differs from GitHub digest'
+ [ "${#expected}" = 64 ] || fail 'Invalid SHA-256'
+ case "$expected" in *[!0-9a-f]*) fail 'Invalid SHA-256';; esac
  fetch "$base/$archive" "$tmp/archive"
  [ "$(sha256 "$tmp/archive")" = "$expected" ] || fail 'Archive SHA-256 mismatch'
  tar -tzf "$tmp/archive" > "$tmp/members" || fail 'Invalid archive'
