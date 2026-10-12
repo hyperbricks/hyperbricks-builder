@@ -5,18 +5,26 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      source_ref:
+        description: 'Optional HyperBricks branch or commit to test; empty builds latest tag on main'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
 
 jobs:
   select:
-    name: Select latest tag on main
+    name: Select HyperBricks source
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     outputs:
       tag: ${{ steps.release.outputs.tag }}
       sha: ${{ steps.release.outputs.sha }}
+      version: ${{ steps.release.outputs.version }}
+      mode: ${{ steps.release.outputs.mode }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
@@ -29,20 +37,19 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: hyperbricks/hyperbricks
-          ref: main
+          ref: ${{ inputs.source_ref || 'main' }}
           fetch-depth: 0
           path: source
           persist-credentials: false
       - name: Resolve one immutable source commit for every runner
         id: release
         shell: bash
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
         run: |
-          set -euo pipefail
-          tag=$(bash scripts/latest-tag.sh source)
-          sha=$(git -C source rev-parse "refs/tags/${tag}^{commit}")
-          test "$(git -C source show "${sha}:assets/version.md" | tr -d '\r\n')" = "$tag"
-          printf 'tag=%s\nsha=%s\n' "$tag" "$sha" >> "$GITHUB_OUTPUT"
-          printf '## Source\nTag: `%s`\n\nCommit: `%s`\n' "$tag" "$sha" >> "$GITHUB_STEP_SUMMARY"
+          bash scripts/resolve-source.sh source >> "$GITHUB_OUTPUT"
+          printf '## Source selection\n\n' >> "$GITHUB_STEP_SUMMARY"
+          cat "$GITHUB_OUTPUT" >> "$GITHUB_STEP_SUMMARY"
 
   build:
     name: Build and test ${{ matrix.os }}/${{ matrix.arch }}
@@ -63,6 +70,7 @@ jobs:
         shell: bash
     env:
       RELEASE_TAG: ${{ needs.select.outputs.tag }}
+      SOURCE_VERSION: ${{ needs.select.outputs.version }}
       SOURCE_SHA: ${{ needs.select.outputs.sha }}
       GOOS: ${{ matrix.os }}
       GOARCH: ${{ matrix.arch }}
@@ -91,7 +99,7 @@ jobs:
           test "$(go env GOHOSTOS)" = "$GOOS"
           test "$(go env GOHOSTARCH)" = "$GOARCH"
           test "$(git -C source rev-parse HEAD)" = "$SOURCE_SHA"
-          test "$(tr -d '\r\n' < source/assets/version.md)" = "$RELEASE_TAG"
+          test "$(tr -d '\r\n' < source/assets/version.md)" = "$SOURCE_VERSION"
       - name: Build native executable
         working-directory: source
         run: |
@@ -104,7 +112,7 @@ jobs:
           python - <<'PY'
           import os
           from pathlib import Path
-          assert os.environ['RELEASE_TAG'] in Path('version.txt').read_text().splitlines(), 'Wrong binary version'
+          assert os.environ['SOURCE_VERSION'] in Path('version.txt').read_text().splitlines(), 'Wrong binary version'
           PY
       - name: Run process lifecycle, Windows process-tree and cache tests
         working-directory: source
@@ -115,8 +123,10 @@ jobs:
         if: ${{ !cancelled() && hashFiles('test-results.jsonl') != '' }}
         run: python scripts/check-test-results.py test-results.jsonl "$GOOS"
       - name: Package verified binary and checksums
+        if: ${{ needs.select.outputs.mode == 'release' }}
         run: python scripts/package-build.py
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: ${{ needs.select.outputs.mode == 'release' }}
         with:
           name: hyperbricks-${{ needs.select.outputs.tag }}-${{ matrix.os }}-${{ matrix.arch }}
           path: dist/*

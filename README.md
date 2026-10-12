@@ -32,7 +32,7 @@ create tags, publish releases or configure CI.
 
 The **Build latest HyperBricks tag** workflow runs on pushes to this repository's
 `main`, on pull requests, and manually via **Actions → Build latest HyperBricks
-tag → Run workflow**. Each run selects the newest version tag reachable from
+tag → Run workflow**. By default, each run selects the newest version tag reachable from
 upstream `main`, including betas, once and pins every job to its exact commit.
 The local script and CI share the same tag selector.
 
@@ -54,3 +54,17 @@ No extra secrets, product-repository changes or release publication are involved
 A new product tag does not itself trigger this separate repository: use **Run
 workflow** to build the latest tag. Native Go plugins remain disabled, matching
 the local script's `CGO_ENABLED=0` build policy.
+
+### Test a branch or commit before tagging
+
+Open **Actions → Build latest HyperBricks tag → Run workflow**. Keep the workflow
+branch set to `main` (this builder repository), and enter the HyperBricks branch
+(e.g. `release/v1.3.2-beta`) or full commit SHA in **source_ref**. Leave this field
+empty for the normal latest-tag build.
+
+A supplied ref is resolved once to its exact commit in `hyperbricks/hyperbricks`.
+All five runners build and test that same commit, even if the branch moves during
+the run. The binary version is checked against that commit's `assets/version.md`;
+a release tag is not required. Invalid refs fail checkout without falling back.
+These test runs retain test output but do not create download packages or tags.
+The resolved commit and selection mode appear in the run summary.

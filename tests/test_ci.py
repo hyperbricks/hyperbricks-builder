@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -47,6 +48,34 @@ class TagSelection(unittest.TestCase):
         result = self.select()
         self.assertNotEqual(result.returncode, 0)
         self.assertEqual(result.stdout, '')
+
+
+class SourceSelection(TagSelection):
+    def test_release_and_untagged_branch_or_commit(self):
+        (self.path / 'assets').mkdir()
+        version = self.path / 'assets/version.md'
+        version.write_text('v1.3.1-beta\n')
+        self.git('add', '.')
+        self.git('commit', '-m', 'Release fixture')
+        self.git('tag', 'v1.3.1-beta')
+        released = self.git('rev-parse', 'HEAD')
+        self.git('checkout', '-b', 'release/v1.3.2-beta')
+        version.write_text('v1.3.2-beta\n')
+        self.git('commit', '-am', 'Candidate fixture')
+        candidate = self.git('rev-parse', 'HEAD')
+        script = str(ROOT / 'scripts/resolve-source.sh')
+        for ref in ('release/v1.3.2-beta', candidate):
+            if ref == candidate:
+                self.git('checkout', '--detach', candidate)
+            output = subprocess.check_output(['bash', script, str(self.path)],
+                env=dict(os.environ, SOURCE_REF=ref), text=True)
+            result = dict(line.split('=', 1) for line in output.splitlines())
+            self.assertEqual(result, dict(tag='', sha=candidate, version='v1.3.2-beta', mode='test'))
+        self.git('checkout', 'main')
+        output = subprocess.check_output(['bash', script, str(self.path)],
+            env=dict(os.environ, SOURCE_REF=''), text=True)
+        result = dict(line.split('=', 1) for line in output.splitlines())
+        self.assertEqual(result, dict(tag='v1.3.1-beta', sha=released, version='v1.3.1-beta', mode='release'))
 
 
 class RequiredTests(unittest.TestCase):
