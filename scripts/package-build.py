@@ -24,7 +24,7 @@ else:
     with tarfile.open(archive, 'w:gz') as handle:
         handle.add(binary, arcname=member)
 digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-archive.with_name(archive.name + '.sha256').write_text(f'{digest}  {archive.name}\n', encoding='utf-8')
+archive.with_name(archive.name + '.sha256').write_bytes(f'{digest}  {archive.name}\n'.encode('utf-8'))
 (out / (name + '.json')).write_text(json.dumps({
     'repository': 'https://github.com/hyperbricks/hyperbricks',
     'tag': tag, 'commit': commit, 'os': goos, 'arch': arch,

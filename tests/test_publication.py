@@ -29,6 +29,38 @@ class FakeAPI:
         if path=='/releases/1':return {'assets':self.assets}
         raise AssertionError(path)
 
+class Packaging(unittest.TestCase):
+    def test_windows_newlines_do_not_change_checksums(self):
+        import os
+        import runpy
+        import tempfile
+        from unittest.mock import patch
+        def windows_write_text(path, data, *args, **kwargs):
+            with path.open('w', encoding=kwargs.get('encoding', 'utf-8'), newline='\r\n') as handle:
+                return handle.write(data)
+        with tempfile.TemporaryDirectory() as directory:
+            previous = Path.cwd()
+            try:
+                os.chdir(directory)
+                Path('fixture').write_bytes(b'native binary fixture')
+                for goos, arch in pub.PLATFORMS:
+                    with patch.dict(os.environ, dict(BINARY='fixture', RELEASE_TAG='v1.0.0-beta',
+                            GOOS=goos, GOARCH=arch, SOURCE_SHA='a'*40, CGO_ENABLED='0')), \
+                         patch.object(Path, 'write_text', windows_write_text), \
+                         patch('subprocess.check_output', return_value='go version fixture'):
+                        runpy.run_path(str(ROOT/'scripts/package-build.py'))
+                files = pub.validate_artifacts(Path('dist'), 'v1.0.0-beta', 'a'*40)
+                self.assertEqual(len(files), 15)
+                for name, data in files.items():
+                    if name.endswith('.sha256'):
+                        self.assertNotIn(b'\r', data)
+                checksum = next(Path('dist').glob('*.sha256'))
+                checksum.write_bytes(b'0'*64 + checksum.read_bytes()[64:])
+                with self.assertRaisesRegex(ValueError, 'Checksum mismatch'):
+                    pub.validate_artifacts(Path('dist'), 'v1.0.0-beta', 'a'*40)
+            finally:
+                os.chdir(previous)
+
 class Publication(unittest.TestCase):
     def test_publish_after_verified_uploads(self):
         api=FakeAPI();pub.publish(api,'v1.0.0-beta','a'*40,{'a':b'one','b':b'two'},'c'*40)
