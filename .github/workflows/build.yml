@@ -112,6 +112,7 @@ jobs:
           set -o pipefail
           go test -json ./cmd/hyperbricks -run '^(TestRuntimeProcess|TestWindowsRuntime|TestResponseCache)' -count=1 -timeout=180s | tee ../test-results.jsonl
       - name: Require successful execution of the critical tests
+        if: ${{ !cancelled() && hashFiles('test-results.jsonl') != '' }}
         run: python scripts/check-test-results.py test-results.jsonl "$GOOS"
       - name: Package verified binary and checksums
         run: python scripts/package-build.py
